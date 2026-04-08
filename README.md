@@ -194,6 +194,13 @@ docs/
   JOURNEY.md              — The reverse engineering process and pitfalls
 ```
 
+## Documentation
+
+- **[Reverse Engineering Findings](docs/FINDINGS.md)** — Hardware details, NAND layout, network analysis, access attempts, and everything discovered about the device
+- **[Community Technical Guide](docs/COMMUNITY_GUIDE.md)** — Detailed guide covering all three root access methods, data pipeline setup, API formats, and device architecture
+- **[The Journey](docs/JOURNEY.md)** — The full story of how we went from a bricked device to root access, including 50 hours of failed brute forcing, building U-Boot from source, and the DNS redirect attack that finally worked
+
+
 ## Support This Project
 
 This project required purchasing a $250 development board and weeks of reverse engineering. If it saved your Curb device from the landfill, consider buying us a coffee:
