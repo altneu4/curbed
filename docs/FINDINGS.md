@@ -88,7 +88,7 @@ Square pad                                    Round pad
 
 ## SoC Security Features (i.MX287)
 
-See [SoC_SECURITY.md](SoC_SECURITY.md) for full analysis. Key points:
+Key points:
 
 | Feature | Status |
 |---------|--------|
@@ -430,7 +430,6 @@ Automated brute-force via `curb_crack.py` over serial at ~12 attempts/min:
 - Total unique passwords tried: ~760+ across both users
 - No lockout observed (BusyBox getty has no rate limiting beyond ~3s failure delay)
 
-See `SERIAL_CRACK_HANDOFF.md` for the full already-tried list and automation scripts.
 
 ### Files to Extract via Serial Console
 | File | Purpose |
@@ -456,11 +455,8 @@ U-Boot boot delay is overridden and Linux requires a root password. Next options
 2. **USB boot mode**: Tie TP30 (D21_SW0) to GND (TP22), load fresh U-Boot via USB with `imx_usb_loader`. Requires soldering to SODIMM USB OTG pins since USB-A port is host-only.
 3. **JTAG via J9**: Use OpenOCD to dump NAND directly. Needs 1.27mm pitch adapter.
 4. **Root password brute-force**: At the serial login prompt. Reddit user u/ElfLogic mentioned root password may be related to serial number.
-5. See [USB_BOOT_GUIDE.md](USB_BOOT_GUIDE.md) and [UBOOT_NAND_DUMP_GUIDE.md](UBOOT_NAND_DUMP_GUIDE.md) for details
 
 ## Related Documents
-- [SoC_SECURITY.md](SoC_SECURITY.md) — i.MX287 security features, eFuse map, HAB, DCP, JTAG analysis
-- [USB_BOOT_GUIDE.md](USB_BOOT_GUIDE.md) — USB boot mode recovery procedure and tools
 
 ## Community Resources
 
