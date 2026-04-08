@@ -1,0 +1,7 @@
+*.pyc
+__pycache__/
+webroot/
+server.pem
+server.key
+*.log
+firmware/
