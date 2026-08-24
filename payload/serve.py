@@ -14,7 +14,16 @@ Prerequisites:
 Usage:
   python3 serve.py
 
-The server runs on ports 443 (HTTPS) and 80 (HTTP).
+The server runs on ports 443 (HTTPS) and 80 (HTTP) by default. These, along
+with where runtime state (webroot cache + TLS cert/key) is written and the
+cert's CN, can be overridden with environment variables — used by the Docker
+image in this repo to keep the container's app files read-only and persist
+state on a volume instead:
+  CURB_HTTP_PORT   (default: 80)
+  CURB_HTTPS_PORT  (default: 443)
+  CURB_DATA_DIR    (default: same directory as this script)
+  CURB_CERT_CN     (default: updates.energycurb.com)
+
 After the update, log in with:
   Serial: root / curb123 (115200 8N1 on J6 header)
   SSH:    ssh -o PubkeyAcceptedAlgorithms=+ssh-rsa root@<curb-ip>
@@ -23,13 +32,25 @@ After the update, log in with:
 import http.server
 import ssl
 import os
+import re
 import sys
+import shutil
 import subprocess
 import threading
 from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVE_DIR = os.path.join(SCRIPT_DIR, 'webroot')
+
+# DATA_DIR holds generated/runtime state (webroot cache + TLS cert/key) and
+# defaults to SCRIPT_DIR to preserve the original behavior. In the Docker
+# image this is set to /data so it can live on a mounted volume, keeping the
+# app image itself read-only and the payload files immutable.
+DATA_DIR = os.environ.get('CURB_DATA_DIR', SCRIPT_DIR)
+SERVE_DIR = os.path.join(DATA_DIR, 'webroot')
+
+HTTP_PORT = int(os.environ.get('CURB_HTTP_PORT', '80'))
+HTTPS_PORT = int(os.environ.get('CURB_HTTPS_PORT', '443'))
+CERT_CN = os.environ.get('CURB_CERT_CN', 'updates.energycurb.com')
 
 # Required files
 REQUIRED = [
@@ -49,10 +70,16 @@ def setup_webroot():
             print("Make sure all payload files are in the same directory as this script.")
             sys.exit(1)
 
-        # Copy to generic path
+        # Copy to generic path. Prefer a hardlink (cheap, original behavior);
+        # fall back to a real copy when SERVE_DIR is on a different
+        # filesystem/mount than SCRIPT_DIR (e.g. a Docker volume), where
+        # hardlinks aren't possible.
         dst = os.path.join(SERVE_DIR, 'api/firmware', f)
         if not os.path.exists(dst):
-            os.link(src, dst)
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)
 
     print(f"Serving from {SERVE_DIR}")
     print("Files:")
@@ -66,8 +93,8 @@ def setup_webroot():
 
 def generate_cert():
     """Generate a self-signed cert for HTTPS."""
-    cert = os.path.join(SCRIPT_DIR, 'server.pem')
-    key = os.path.join(SCRIPT_DIR, 'server.key')
+    cert = os.path.join(DATA_DIR, 'server.pem')
+    key = os.path.join(DATA_DIR, 'server.key')
 
     if not os.path.exists(cert):
         print("Generating self-signed certificate...")
@@ -75,10 +102,28 @@ def generate_cert():
             'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
             '-keyout', key, '-out', cert,
             '-days', '365', '-nodes',
-            '-subj', '/CN=updates.energycurb.com'
+            '-subj', f'/CN={CERT_CN}'
         ], capture_output=True, check=True)
 
     return cert, key
+
+
+# Matches only the real device request pattern for the password-change
+# payload: GET /api/firmware/<serial>/update.tar.gz.gpg -> 200. This is
+# deliberately narrower than a plain substring check on 'update.tar.gz.gpg',
+# which also matches:
+#   - a manual curl/browser check against the generic (non-serial) path,
+#     e.g. `curl http://localhost/api/firmware/update.tar.gz.gpg`
+#   - a request for the neighboring update.tar.gz.gpg.md5sum checksum file
+# Both of those previously triggered a false "PAYLOAD DELIVERED" banner.
+# The device is documented to request the serial-specific path (serve.py's
+# do_GET() then maps it to the generic file on disk), so requiring the
+# serial segment is a reliable way to tell a real device apart from a
+# manual test — this is unaffected by Docker's port-forwarding hiding the
+# real client IP, since it doesn't depend on `client` at all.
+DEVICE_PAYLOAD_RE = re.compile(
+    r'"GET /api/firmware/(?P<serial>[^/\s]+)/update\.tar\.gz\.gpg HTTP/\d\.\d" 200\b'
+)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -90,11 +135,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         client = self.client_address[0]
 
-        # Highlight requests from Curb devices (not localhost)
-        if client not in ('127.0.0.1', '::1') and 'update.tar.gz.gpg' in msg and '200' in msg:
+        match = DEVICE_PAYLOAD_RE.search(msg)
+        if match:
+            serial = match.group('serial')
             print(f"\033[92m[{timestamp}] {client} - {msg}\033[0m")
-            print(f"\033[92m  *** PAYLOAD DELIVERED! The device will reboot and apply changes. ***\033[0m")
-            print(f"\033[92m  *** Wait 2-3 minutes, then: ssh root@{client} (password: curb123) ***\033[0m")
+            print(f"\033[92m  *** PAYLOAD DELIVERED to serial {serial}! The device will reboot and apply changes. ***\033[0m")
+            print(f"\033[92m  *** Wait 2-3 minutes, then SSH in. Find its IP from your router's DHCP")
+            print(f"\033[92m      leases (not necessarily {client} — Docker can hide the real client IP,")
+            print(f"\033[92m      e.g. on Docker Desktop): ssh root@<curb-ip> (password: curb123) ***\033[0m")
         else:
             print(f"[{timestamp}] {client} - {msg}")
 
@@ -126,10 +174,11 @@ def main():
     print("=" * 60)
     print()
 
+    os.makedirs(DATA_DIR, exist_ok=True)
     setup_webroot()
     cert, key = generate_cert()
 
-    # HTTPS on 443
+    # HTTPS on HTTPS_PORT (443 by default)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
     try:
@@ -138,8 +187,8 @@ def main():
         pass
 
     print("Starting servers...")
-    t_https = threading.Thread(target=run_server, args=(443, ctx), daemon=True)
-    t_http = threading.Thread(target=run_server, args=(80, None), daemon=True)
+    t_https = threading.Thread(target=run_server, args=(HTTPS_PORT, ctx), daemon=True)
+    t_http = threading.Thread(target=run_server, args=(HTTP_PORT, None), daemon=True)
     t_https.start()
     t_http.start()
 

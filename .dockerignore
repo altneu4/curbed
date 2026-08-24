@@ -1,0 +1,12 @@
+.git
+.github
+docs
+README.md
+LICENSE
+docker-compose.yml
+payload/webroot/
+payload/server.pem
+payload/server.key
+payload/*.log
+**/__pycache__/
+**/*.pyc

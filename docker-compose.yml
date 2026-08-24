@@ -1,0 +1,61 @@
+services:
+  curb-update-server:
+    # Pulls the published image by default; `docker compose up --build` (or
+    # `docker compose build`) builds locally from ./Dockerfile instead — no
+    # extra config needed either way. Running from a fork? Override the
+    # image in a .env file:
+    #   CURB_IMAGE=ghcr.io/<your-github-username>/curbed:latest
+    image: ${CURB_IMAGE:-ghcr.io/codearranger/curbed:latest}
+    build: .
+    container_name: curb-update-server
+    restart: unless-stopped
+    # Host 80/443 -> container's unprivileged 8080/8443 (see Dockerfile).
+    # Curb devices on the LAN only ever see 80/443, matching what their
+    # firmware expects from updates.energycurb.com.
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - curb_data:/data
+    # environment:
+    #   Uncomment to change the identity the self-signed cert presents.
+    #   Only needed if you've changed the DNS name you're redirecting.
+    #   - CURB_CERT_CN=updates.energycurb.com
+
+  # Optional: run a local DNS resolver that redirects
+  # updates.energycurb.com to this host, so you don't have to configure
+  # your router/Pi-hole by hand. Point your Curb devices' network (or your
+  # whole LAN) at this container's IP for DNS, then remove/replace it once
+  # recovery is done. Disabled by default — enable with:
+  #   docker compose --profile dns up -d
+  curb-dns:
+    image: 4km3/dnsmasq:2.90-r3
+    container_name: curb-dns
+    profiles: ["dns"]
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    # NOTE: Compose interpolates every service's variables when the file is
+    # parsed, even ones excluded by --profile, so this can't use a ${VAR:?}
+    # hard-required default without breaking plain `docker compose up`. Set
+    # CURB_SERVER_IP in .env before running --profile dns; the entrypoint
+    # below checks it at container start instead and fails with a clear
+    # error if it's still unset.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$${CURB_SERVER_IP}" ]; then
+          echo "ERROR: set CURB_SERVER_IP (e.g. in a .env file) to this host's LAN IP before using the dns profile." >&2
+          exit 1
+        fi
+        exec dnsmasq --keep-in-foreground \
+          --address="/updates.energycurb.com/$${CURB_SERVER_IP}" \
+          --no-resolv --server=1.1.1.1 --server=8.8.8.8
+    environment:
+      - CURB_SERVER_IP=${CURB_SERVER_IP:-}
+
+volumes:
+  curb_data:

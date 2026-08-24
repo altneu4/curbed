@@ -10,6 +10,8 @@ The Curb Energy Monitor is a whole-home energy monitoring system that relied ent
 
 You need: a computer on your network running Python 3, and the ability to add a DNS entry.
 
+> **Prefer Docker?** See [docs/DOCKER.md](docs/DOCKER.md) for a containerized version of the server below — same workflow, `docker compose up -d` instead of a local Python install.
+
 ### 1. Add DNS redirect
 
 Point `updates.energycurb.com` to the machine that will run the server:
@@ -188,10 +190,13 @@ payload/                  — Ready-to-use root access payload
   os.tar.gz.gpg.md5sum    — OS checksum
   update.tar.gz.gpg       — Password change payload (GPG encrypted)
   update.tar.gz.gpg.md5sum — Software checksum
+Dockerfile                — Container for payload/serve.py
+docker-compose.yml        — Runs the server (+ an optional local DNS resolver)
 docs/
   FINDINGS.md             — Complete reverse engineering findings
   COMMUNITY_GUIDE.md      — Detailed technical guide
   JOURNEY.md              — The reverse engineering process and pitfalls
+  DOCKER.md               — Running the server in Docker
 ```
 
 ## Documentation
@@ -199,6 +204,7 @@ docs/
 - **[Reverse Engineering Findings](docs/FINDINGS.md)** — Hardware details, NAND layout, network analysis, access attempts, and everything discovered about the device
 - **[Community Technical Guide](docs/COMMUNITY_GUIDE.md)** — Detailed guide covering all three root access methods, data pipeline setup, API formats, and device architecture
 - **[The Journey](docs/JOURNEY.md)** — The full story of how we went from a bricked device to root access, including 50 hours of failed brute forcing, building U-Boot from source, and the DNS redirect attack that finally worked
+- **[Docker](docs/DOCKER.md)** — Containerized version of the update server, including troubleshooting notes from real recovery attempts
 
 
 ## Support This Project
