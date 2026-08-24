@@ -5,3 +5,4 @@ server.pem
 server.key
 *.log
 firmware/
+.env

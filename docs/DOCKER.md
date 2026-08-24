@@ -79,6 +79,29 @@ this host for DNS. Remove it once you're done:
 docker compose --profile dns down
 ```
 
+## Running behind an existing reverse proxy
+
+If host ports 80/443 are already spoken for — common on a NAS (Synology,
+TrueNAS, etc.) running its own reverse proxy or other services — point that
+proxy at this container instead of letting it bind 80/443 directly. Set in
+`.env`:
+
+```bash
+CURB_HOST_HTTP_PORT=8080
+CURB_HOST_HTTPS_PORT=8443
+```
+
+Then in your proxy, add **two** rules for the source hostname
+`updates.energycurb.com` — one for HTTP, one for HTTPS — both pointed at
+this host's `8080`/`8443`. Both protocols matter: per the documented
+request order in `docs/FINDINGS.md`, the Curb tries HTTPS first, falls back
+to plain HTTP, then retries HTTPS without a serial number in the path — a
+proxy rule for only one protocol will silently miss part of that sequence.
+It doesn't matter whether the proxy terminates TLS with its own real
+certificate or passes through to this container's self-signed one — the
+Curb doesn't validate certificates either way (`wget
+--no-check-certificate`).
+
 ## Configuration
 
 `serve.py` reads these environment variables (already set correctly in
@@ -91,9 +114,15 @@ docker compose --profile dns down
 | `CURB_DATA_DIR` | `/data` | Where the generated webroot cache and self-signed TLS cert/key are stored (a named volume, `curb_data`, so they survive `docker compose restart`) |
 | `CURB_CERT_CN` | `updates.energycurb.com` | CN on the self-signed cert; only matters if you're redirecting a different hostname |
 
-`docker-compose.yml` also reads `CURB_IMAGE` (which registry image to pull
-before falling back to a local build) and `CURB_SERVER_IP` (for the
-optional DNS container) from a `.env` file in this directory.
+`docker-compose.yml` itself reads a few more from a `.env` file in this
+directory:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CURB_IMAGE` | `ghcr.io/codearranger/curbed:latest` | Which registry image to pull before falling back to a local build |
+| `CURB_HOST_HTTP_PORT` | `80` | Host port published for HTTP — change if something else (e.g. a NAS reverse proxy) already owns 80 |
+| `CURB_HOST_HTTPS_PORT` | `443` | Host port published for HTTPS — same idea, for 443 |
+| `CURB_SERVER_IP` | *(none)* | This host's LAN IP, only used by the optional DNS container |
 
 ## Troubleshooting
 
