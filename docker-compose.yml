@@ -11,10 +11,16 @@ services:
     restart: unless-stopped
     # Host 80/443 -> container's unprivileged 8080/8443 (see Dockerfile).
     # Curb devices on the LAN only ever see 80/443, matching what their
-    # firmware expects from updates.energycurb.com.
+    # firmware expects from updates.energycurb.com. Running behind a
+    # reverse proxy that already owns host 80/443 (common on a NAS —
+    # Synology, TrueNAS, etc.)? Point the proxy's HTTP and HTTPS rules for
+    # updates.energycurb.com at this host's 8080/8443 instead, and set
+    # these to publish those directly:
+    #   CURB_HOST_HTTP_PORT=8080
+    #   CURB_HOST_HTTPS_PORT=8443
     ports:
-      - "80:8080"
-      - "443:8443"
+      - "${CURB_HOST_HTTP_PORT:-80}:8080"
+      - "${CURB_HOST_HTTPS_PORT:-443}:8443"
     volumes:
       - curb_data:/data
     # environment:
