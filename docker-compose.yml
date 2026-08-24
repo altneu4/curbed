@@ -18,15 +18,22 @@ services:
     # these to publish those directly:
     #   CURB_HOST_HTTP_PORT=8080
     #   CURB_HOST_HTTPS_PORT=8443
+    #
+    # Port 3000 is the optional diagnostics.energycurb.com stand-in (see
+    # serve.py's module docstring and docs/DOCKER.md) — only useful if
+    # you've also added a second DNS override + proxy rule for that
+    # hostname. Set CURB_DIAGNOSTICS_ENABLED=false below to turn it off.
     ports:
       - "${CURB_HOST_HTTP_PORT:-80}:8080"
       - "${CURB_HOST_HTTPS_PORT:-443}:8443"
+      - "${CURB_HOST_DIAGNOSTICS_PORT:-3000}:3000"
     volumes:
       - curb_data:/data
-    # environment:
-    #   Uncomment to change the identity the self-signed cert presents.
-    #   Only needed if you've changed the DNS name you're redirecting.
-    #   - CURB_CERT_CN=updates.energycurb.com
+    environment:
+      - CURB_DIAGNOSTICS_ENABLED=${CURB_DIAGNOSTICS_ENABLED:-true}
+      # Uncomment to change the identity the self-signed cert presents.
+      # Only needed if you've changed the DNS name you're redirecting.
+      # - CURB_CERT_CN=updates.energycurb.com
 
   # Optional: run a local DNS resolver that redirects
   # updates.energycurb.com to this host, so you don't have to configure

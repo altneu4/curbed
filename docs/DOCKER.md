@@ -102,6 +102,34 @@ certificate or passes through to this container's self-signed one — the
 Curb doesn't validate certificates either way (`wget
 --no-check-certificate`).
 
+## Capturing diagnostics.energycurb.com traffic
+
+Separately from the firmware-update mechanism, the Curb periodically
+`POST`s a status report to `diagnostics.energycurb.com` on port 3000 — and
+unlike `updates.energycurb.com`, that endpoint is still live (per
+`docs/FINDINGS.md`), so it's **not** spoofed by default the way
+`updates.energycurb.com` is. If you want to see what a device sends there —
+useful as an independent "is it alive and reachable" signal even before a
+firmware check-in happens, and the body may include the device's serial
+number — this container has an optional third listener for it.
+
+It's on by default (port 3000) but does nothing unless you also point DNS
+at it, since without a matching DNS override the device just keeps talking
+to the real endpoint as normal. To actually capture it:
+
+1. Add a second DNS override, same as you did for `updates.energycurb.com`,
+   for `diagnostics.energycurb.com` → this host.
+2. If you're behind a reverse proxy (see above), add one more rule — HTTP
+   only, port 3000 has no TLS — for that hostname, pointed at this host's
+   `3000` (or whatever `CURB_HOST_DIAGNOSTICS_PORT` you set).
+3. Watch the same `docker compose logs -f curb-update-server` output; hits
+   are shown in cyan rather than green, to keep them visually distinct from
+   an actual payload delivery.
+
+Set `CURB_DIAGNOSTICS_ENABLED=false` in `.env` if you'd rather not run this
+listener at all — e.g. if you don't want to redirect a still-live, real
+endpoint away from wherever it currently reports to.
+
 ## Configuration
 
 `serve.py` reads these environment variables (already set correctly in
@@ -113,6 +141,8 @@ Curb doesn't validate certificates either way (`wget
 | `CURB_HTTPS_PORT` | `8443` | Port the HTTPS listener binds inside the container |
 | `CURB_DATA_DIR` | `/data` | Where the generated webroot cache and self-signed TLS cert/key are stored (a named volume, `curb_data`, so they survive `docker compose restart`) |
 | `CURB_CERT_CN` | `updates.energycurb.com` | CN on the self-signed cert; only matters if you're redirecting a different hostname |
+| `CURB_DIAGNOSTICS_PORT` | `3000` | Port the diagnostics-capture listener binds inside the container |
+| `CURB_DIAGNOSTICS_ENABLED` | `true` | Set to `false`/`0` to disable the diagnostics-capture listener entirely |
 
 `docker-compose.yml` itself reads a few more from a `.env` file in this
 directory:
@@ -122,6 +152,8 @@ directory:
 | `CURB_IMAGE` | `ghcr.io/codearranger/curbed:latest` | Which registry image to pull before falling back to a local build |
 | `CURB_HOST_HTTP_PORT` | `80` | Host port published for HTTP — change if something else (e.g. a NAS reverse proxy) already owns 80 |
 | `CURB_HOST_HTTPS_PORT` | `443` | Host port published for HTTPS — same idea, for 443 |
+| `CURB_HOST_DIAGNOSTICS_PORT` | `3000` | Host port published for the diagnostics-capture listener |
+| `CURB_DIAGNOSTICS_ENABLED` | `true` | Passed through to the container — set `false` to disable the diagnostics-capture listener |
 | `CURB_SERVER_IP` | *(none)* | This host's LAN IP, only used by the optional DNS container |
 
 ## Troubleshooting
