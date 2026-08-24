@@ -24,6 +24,17 @@ state on a volume instead:
   CURB_DATA_DIR    (default: same directory as this script)
   CURB_CERT_CN     (default: updates.energycurb.com)
 
+There's also an optional third listener that stands in for
+diagnostics.energycurb.com, a separate (and, unlike the update mechanism,
+still genuinely alive) endpoint the Curb periodically POSTs a status report
+to on port 3000. It's not spoofed by default — only updates.energycurb.com
+is — since that endpoint still works and this only makes sense if you also
+add a second DNS override for diagnostics.energycurb.com pointing here. When
+you do, this logs whatever the device sends (which may include its serial
+number) and replies 200 so the device's own behavior isn't disrupted:
+  CURB_DIAGNOSTICS_PORT     (default: 3000)
+  CURB_DIAGNOSTICS_ENABLED  (default: true; set to "false"/"0" to disable)
+
 After the update, log in with:
   Serial: root / curb123 (115200 8N1 on J6 header)
   SSH:    ssh -o PubkeyAcceptedAlgorithms=+ssh-rsa root@<curb-ip>
@@ -34,9 +45,11 @@ import ssl
 import os
 import re
 import sys
+import json
 import shutil
 import subprocess
 import threading
+import time
 from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +64,11 @@ SERVE_DIR = os.path.join(DATA_DIR, 'webroot')
 HTTP_PORT = int(os.environ.get('CURB_HTTP_PORT', '80'))
 HTTPS_PORT = int(os.environ.get('CURB_HTTPS_PORT', '443'))
 CERT_CN = os.environ.get('CURB_CERT_CN', 'updates.energycurb.com')
+
+DIAGNOSTICS_PORT = int(os.environ.get('CURB_DIAGNOSTICS_PORT', '3000'))
+DIAGNOSTICS_ENABLED = os.environ.get('CURB_DIAGNOSTICS_ENABLED', 'true').strip().lower() not in (
+    '0', 'false', 'no', ''
+)
 
 # Required files
 REQUIRED = [
@@ -159,8 +177,61 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
 
-def run_server(port, ssl_context=None):
-    server = http.server.HTTPServer(('0.0.0.0', port), Handler)
+class DiagnosticsHandler(http.server.BaseHTTPRequestHandler):
+    """
+    Stands in for diagnostics.energycurb.com (still alive at 35.161.218.8:3000
+    per docs/FINDINGS.md — unlike the update mechanism, this one isn't
+    abandoned infrastructure, which is why it isn't spoofed by default).
+    Curb devices periodically POST a status report here; this just logs
+    whatever arrives and always answers 200 so the device's own reporting
+    behavior isn't disrupted. Useful as a signal that a device is alive and
+    reachable independent of whether the firmware-update check-in has
+    happened yet, and the POST body may include the device's serial number.
+    """
+
+    def log_message(self, format, *args):
+        # Suppress BaseHTTPRequestHandler's default access log — do_POST /
+        # do_GET below print their own, timestamped and highlighted line.
+        pass
+
+    def _respond_ok(self):
+        self.send_response(200)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def do_POST(self):
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        client = self.client_address[0]
+        length = int(self.headers.get('Content-Length') or 0)
+        body = self.rfile.read(length) if length else b''
+
+        print(f"\033[96m[{timestamp}] {client} - \"POST {self.path}\" (diagnostics, {length} bytes)\033[0m")
+        if body:
+            preview = body[:2000]
+            try:
+                text = json.dumps(json.loads(preview), indent=2)
+            except (ValueError, UnicodeDecodeError):
+                try:
+                    text = preview.decode('utf-8')
+                except UnicodeDecodeError:
+                    text = repr(preview)
+            if len(body) > len(preview):
+                text += f"\n... ({len(body) - len(preview)} more bytes truncated)"
+            for line in text.splitlines():
+                print(f"\033[96m      {line}\033[0m")
+
+        self._respond_ok()
+
+    def do_GET(self):
+        # Not part of the documented behavior, but answer harmlessly rather
+        # than erroring if anything ever GETs here.
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"\033[96m[{timestamp}] {self.client_address[0]} - \"GET {self.path}\" (diagnostics)\033[0m")
+        self._respond_ok()
+
+
+def run_server(port, ssl_context=None, handler_class=Handler):
+    server = http.server.HTTPServer(('0.0.0.0', port), handler_class)
     if ssl_context:
         server.socket = ssl_context.wrap_socket(server.socket, server_side=True)
     proto = "HTTPS" if ssl_context else "HTTP"
@@ -187,10 +258,17 @@ def main():
         pass
 
     print("Starting servers...")
-    t_https = threading.Thread(target=run_server, args=(HTTPS_PORT, ctx), daemon=True)
-    t_http = threading.Thread(target=run_server, args=(HTTP_PORT, None), daemon=True)
-    t_https.start()
-    t_http.start()
+    threads = [
+        threading.Thread(target=run_server, args=(HTTPS_PORT, ctx), daemon=True),
+        threading.Thread(target=run_server, args=(HTTP_PORT, None), daemon=True),
+    ]
+    if DIAGNOSTICS_ENABLED:
+        threads.append(threading.Thread(
+            target=run_server, args=(DIAGNOSTICS_PORT, None, DiagnosticsHandler), daemon=True
+        ))
+        print(f"  Diagnostics capture enabled on port {DIAGNOSTICS_PORT} (see CURB_DIAGNOSTICS_ENABLED)")
+    for t in threads:
+        t.start()
 
     print()
     print("Waiting for Curb device to check for updates...")
@@ -208,7 +286,7 @@ def main():
 
     try:
         while True:
-            t_https.join(1)
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\nStopping.")
 
